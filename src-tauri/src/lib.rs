@@ -6,6 +6,35 @@ mod serve;
 use serve::{LocalServeSpec, ServeHandle, ServeManager, ServeStatus};
 use tauri::{AppHandle, State};
 
+/// 当前运行平台，供前端区分桌面 / 移动端行为（安卓版不支持本地 serve）。
+#[tauri::command]
+fn app_platform() -> &'static str {
+    #[cfg(target_os = "android")]
+    {
+        "android"
+    }
+    #[cfg(target_os = "ios")]
+    {
+        "ios"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        "unknown"
+    }
+}
+
 #[tauri::command]
 fn start_local_serve(app: AppHandle, manager: State<'_, ServeManager>, spec: Option<LocalServeSpec>) -> Result<ServeHandle, String> {
     let spec = spec.unwrap_or_default();
@@ -43,13 +72,13 @@ fn open_in_explorer(dir: String) -> Result<(), String> {
             .arg(&dir)
             .spawn()
             .map_err(|e| format!("打开资源管理器失败: {e}"))?;
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = path; // 非 Windows 暂不实现
-        return Err("仅支持 Windows".into());
+        Err("在资源管理器中打开目录仅桌面端支持".into())
     }
-    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,6 +88,7 @@ pub fn run() {
         .manage(ServeManager::default())
         .manage(directories::DirectoryAccess::default())
         .invoke_handler(tauri::generate_handler![
+            app_platform,
             start_local_serve,
             stop_local_serve,
             local_serve_status,

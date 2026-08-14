@@ -44,6 +44,8 @@ export interface TauriBridge {
   stopLocalServe(): Promise<void>
   localServeStatus(): Promise<{ running: boolean; url?: string; kind?: string } | null>
   isTauri(): boolean
+  /** 运行平台（windows / macos / linux / android / ios …）。 */
+  platform(): string
 }
 
 export function createBrowserBridge(): TauriBridge {
@@ -58,17 +60,22 @@ export function createBrowserBridge(): TauriBridge {
     isTauri() {
       return false
     },
+    platform() {
+      return "browser"
+    },
   }
 }
 
 async function loadTauriBridge(): Promise<TauriBridge> {
   const mod = await import("@tauri-apps/api/core")
   if (typeof mod.invoke !== "function") throw new Error("Tauri runtime unavailable（invoke 不可用）")
+  const platform = await mod.invoke<string>("app_platform").catch(() => "unknown")
   return {
     startLocalServe: (spec) => mod.invoke<ServeHandle>("start_local_serve", { spec }),
     stopLocalServe: () => mod.invoke("stop_local_serve"),
     localServeStatus: () => mod.invoke<{ running: boolean; url?: string; kind?: string } | null>("local_serve_status"),
     isTauri: () => true,
+    platform: () => platform,
   }
 }
 
@@ -96,6 +103,8 @@ function persistProfileStore(profiles: ServerProfileStore) {
 interface AppContextValue {
   store: AppStore
   bridge: () => TauriBridge
+  /** 当前运行平台（browser 表示浏览器调试模式）。 */
+  platform: () => string
   client: () => MimoClient | null
   connectExternal(url: string, username: string, password: string): Promise<void>
   connectLocal(): Promise<boolean>
@@ -123,6 +132,7 @@ const AppContext = createContext<AppContextValue>()
 export function AppProvider(props: ParentProps) {
   const store = createAppStore()
   const [bridge, setBridge] = createSignal<TauriBridge>(createBrowserBridge())
+  const [platform, setPlatform] = createSignal<string>("browser")
   const [client, setClient] = createSignal<MimoClient | null>(null)
   const [connError, setConnError] = createSignal<string | null>(null)
   const [profileStore, setProfileStore] = createSignal<ServerProfileStore>(loadProfileStore())
@@ -144,8 +154,24 @@ export function AppProvider(props: ParentProps) {
 
   onMount(async () => {
     const isTauriEnv = typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined"
-    if (isTauriEnv) setBridge(await loadTauriBridge())
+    if (isTauriEnv) {
+      const loaded = await loadTauriBridge()
+      setBridge(loaded)
+      setPlatform(loaded.platform())
+    }
     const initial = activeProfile()
+    // 安卓版不支持本地 serve：激活配置为本地时不自动连接，改用首个云端配置。
+    if (platform() === "android" && initial.mode === "local") {
+      const remote = profiles().find((profile) => profile.mode === "remote")
+      if (remote) {
+        try {
+          await activateProfile(remote, false)
+        } catch {
+          // The disconnected workspace contains a settings entry for recovery.
+        }
+      }
+      return
+    }
     // 用户关闭「随应用启动本地服务器」且激活配置为本地：不自动拉起 serve。
     if (initial.mode === "local" && !profileStore().autoStartLocal) return
     try {
@@ -218,6 +244,9 @@ export function AppProvider(props: ParentProps) {
       const url = profile.url?.replace(/\/+$/, "")
       if (!url || !/^https?:\/\//.test(url)) throw new Error("云端服务器地址需要以 http:// 或 https:// 开头")
       return { baseUrl: url, username: profile.username ?? "", password: profile.password ?? "" }
+    }
+    if (platform() === "android") {
+      throw new Error("安卓版不支持本地服务器，请在设置中添加云端服务器地址。")
     }
     if (!bridge().isTauri()) throw new Error("浏览器模式无法启动本地服务器，请选择云端服务器。")
     const handle = await bridge().startLocalServe(
@@ -374,6 +403,7 @@ export function AppProvider(props: ParentProps) {
       value={{
         store,
         bridge,
+        platform,
         client,
         connectExternal,
         connectLocal,

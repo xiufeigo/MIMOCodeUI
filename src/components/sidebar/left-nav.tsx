@@ -47,6 +47,10 @@ export interface LeftNavProps {
   workspaceDirectory?: string | null
   /** 打开/切换工作区：传入目录时载入其历史任务流程，传入 undefined 时清除工作区。 */
   onOpenWorkspace?: (directory: string | undefined) => void
+  /** 新建任务页正在使用的目录（非空时任务列表中展示「新任务」占位行）。 */
+  pendingNewTaskDirectory?: string | null
+  /** 新建任务页的草稿内容（占位行显示草稿；为空显示「新任务」）。 */
+  pendingNewTaskDraft?: string
 }
 
 /** 目录显示名。 */
@@ -143,8 +147,20 @@ export const LeftNav: Component<LeftNavProps> = (p) => {
   const status = (id: string) => store.store.status[id]
   const dirOf = (id: string) => store.store.sessions[id]?.directory
   const parentOf = (id: string) => store.store.sessions[id]?.parentID ?? null
-  const groups = createMemo(() => groupByDirectory(p.sessions, dirOf))
+  /** 任务分组：新建任务占位目录（无历史会话）也会作为分组出现。 */
+  const groups = createMemo(() => {
+    const base = groupByDirectory(p.sessions, dirOf)
+    const pending = p.pendingNewTaskDirectory
+    if (!pending || p.archiveMode) return base
+    if (base.some((group) => group.key === pending)) return base
+    return [{ key: pending, label: dirLabel(pending), ids: [] }, ...base]
+  })
   const expand = () => p.expanded
+  /** 占位行文案：有草稿显示草稿，否则显示「新任务」。 */
+  const pendingLabel = () => {
+    const draft = p.pendingNewTaskDraft?.trim()
+    return draft || "新任务"
+  }
 
   function toggleGroup(key: string) {
     setCollapsed((previous) => {
@@ -306,7 +322,7 @@ export const LeftNav: Component<LeftNavProps> = (p) => {
     >
       <div class={`flex h-12 items-center border-b border-[var(--border-color)] ${expand() ? "px-3" : "justify-center"}`}>
         {expand() ? (
-          <span class="text-sm font-bold text-[var(--text-primary)]">MIMO Code UI</span>
+          <span class="text-sm font-bold text-[var(--text-primary)]">MiMoCodeUI</span>
         ) : (
           <span class="text-sm font-bold text-[var(--accent)]">M</span>
         )}
@@ -394,7 +410,9 @@ export const LeftNav: Component<LeftNavProps> = (p) => {
                           <ChevronRight size={14} class={`shrink-0 transition-transform ${isCollapsed() ? "" : "rotate-90"}`} />
                           <Folder size={14} class="shrink-0" />
                           <span class="min-w-0 flex-1 truncate">{group.label}</span>
-                          <span class="shrink-0">{group.ids.length}</span>
+                          <Show when={group.ids.length > 0}>
+                            <span class="shrink-0">{group.ids.length}</span>
+                          </Show>
                         </Show>
                       </button>
                       <Show when={expand()}>
@@ -453,13 +471,33 @@ export const LeftNav: Component<LeftNavProps> = (p) => {
                     </div>
 
                     <Show when={expand() && !isCollapsed()}>
+                      {/* 新建任务占位行：目录下还没有会话时展示，任务开始执行后由真实会话替换 */}
+                      <Show when={p.pendingNewTaskDirectory && group.key === p.pendingNewTaskDirectory}>
+                        <div class="group flex h-9 items-center rounded-md py-1 pl-2 pr-2 text-sm transition-colors hover:bg-[var(--bg-hover)]">
+                          <div class="relative h-4 w-4 shrink-0">
+                            <span class="absolute top-0 left-0 flex h-4 w-4 items-center justify-center">
+                              <span class="h-1.5 w-1.5 rounded-full border border-dashed border-[var(--text-muted)]" />
+                            </span>
+                          </div>
+                          <button
+                            class="flex min-w-0 flex-1 items-center gap-2 pl-1 text-left"
+                            onClick={() => p.onCreate(p.pendingNewTaskDirectory ?? undefined)}
+                            title={pendingLabel()}
+                          >
+                            <span class="min-w-0 flex-1 truncate text-[var(--text-secondary)]">{pendingLabel()}</span>
+                          </button>
+                          <span class="shrink-0 rounded bg-[var(--bg-raised)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+                            新任务
+                          </span>
+                        </div>
+                      </Show>
                       {renderTree(buildSessionTree(group.ids, parentOf), 0, [])}
                     </Show>
                   </section>
                 )
               }}
             </For>
-            <Show when={p.sessions.length === 0}>
+            <Show when={p.sessions.length === 0 && !p.pendingNewTaskDirectory}>
               <p class={`text-xs text-[var(--text-muted)] ${expand() ? "px-3 py-2" : "py-2 text-center"}`}>
                 {expand()
                   ? p.archiveMode

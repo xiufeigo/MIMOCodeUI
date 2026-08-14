@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MimoCodeUI smoke test: spawns a real `mimo serve`, then exercises the same
+// MiMoCodeUI smoke test: spawns a real `mimo serve`, then exercises the same
 // protocol surface the desktop app relies on:
 //   1. health check (Basic auth)
 //   2. session create + list

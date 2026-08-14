@@ -1,4 +1,4 @@
-# MimoCodeUI 实施计划
+# MiMoCodeUI 实施计划
 
 - 版本：1.0
 - 后端：MiMo-Code `mimo serve`（协议调研结论见 README「协议说明」）
@@ -61,7 +61,7 @@
 
 ### 2026-08-12 M5 NSIS 打包
 
-- `npx tauri build` 产出 `src-tauri/target/release/bundle/nsis/MimoCodeUI_0.1.0_x64-setup.exe`
+- `npx tauri build` 产出 `src-tauri/target/release/bundle/nsis/MiMoCodeUI_0.1.0_x64-setup.exe`
   （SHA-256 `ebfacd86bf006711cad4845e230c503aa2f8179c1025c4d69c9ff4c28abed3b3`）。
 - release 可执行文件 `mimo-code-ui.exe`（3.0MB）由 release profile（lto+opt-level=s）产出。
 - 安装包未捆绑 mimo 二进制：首版要求系统已安装 `@mimo-ai/cli`；捆绑 externalBin 留待后续。
@@ -89,7 +89,7 @@
   （`@mimo-ai/mimocode-windows-x64/bin/mimo.exe`，约 130MB）到 `src-tauri/resources/`；
   `tauri.conf.json` 声明 bundle resources；`serve.rs` 优先解析捆绑二进制、
   回退系统 `mimo`（Windows 仍走 `cmd /C` 兼容 shim）。
-- **NSIS 含捆绑二进制验证**：静默安装 `MimoCodeUI_0.1.0_x64-setup.exe`（34MB，SHA-256
+- **NSIS 含捆绑二进制验证**：静默安装 `MiMoCodeUI_0.1.0_x64-setup.exe`（34MB，SHA-256
   `12cc8828538ba42ce78932fbf4686f880a81476735cae04762d6deddd2ccd09c`）到临时目录，确认
   含 `mimo.exe` + `mimo-version.txt` + `mimo-code-ui.exe`；直接运行捆绑的 `mimo.exe serve`
   启动成功、`/global/health` 200——安装包可独立工作，无需系统预装 mimo。
@@ -186,7 +186,7 @@
 - `session-sidebar.tsx` 重构：按 `session.directory` 分组（取路径最后一段作组名，
   无目录归「未分类」），组标题含 📁 图标 + 目录名 + 会话数，可折叠（默认展开）；
   组内保持会话 newest-first 顺序，组按首次出现顺序排列。
-- 浏览器端到端验证：分组渲染正确（MimoCodeUI 16 / src-tauri 5 / test 3 / Temp 1 /
+- 浏览器端到端验证：分组渲染正确（MiMoCodeUI 16 / src-tauri 5 / test 3 / Temp 1 /
   xiufe 4 / hermes_cache 4 / 未分类等），折叠逻辑与 Models 分组折叠同构。
 
 ### 2026-08-12 Trae 风格三栏布局重设计

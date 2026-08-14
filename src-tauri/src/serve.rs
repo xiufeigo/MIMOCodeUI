@@ -9,18 +9,29 @@
 // Optional WSL mode: `wsl.exe -d <distro> <binary> serve --port 0`. The
 // listening line still arrives on the wsl.exe stdout, and WSL2 forwards
 // 127.0.0.1:PORT to the Windows host.
+//
+// Android: local serve is unavailable (no desktop binary), so the manager is
+// a stub that always reports an error / not running.
 
+#[cfg(not(target_os = "android"))]
 use std::io::{BufRead, BufReader};
+#[cfg(not(target_os = "android"))]
 use std::process::{Child, Command, Stdio};
-use std::sync::{mpsc, Mutex};
+#[cfg(not(target_os = "android"))]
+use std::sync::mpsc;
+use std::sync::Mutex;
+#[cfg(not(target_os = "android"))]
 use std::time::Duration;
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "android"))]
+use rand::Rng;
+#[cfg(not(target_os = "android"))]
 use tauri::Manager;
 
-pub const DEFAULT_MIMO_USERNAME: &str = "mimocode";
-const START_TIMEOUT: Duration = Duration::from_secs(20);
+/// 安卓版不提供本地 serve 的提示文案。
+#[cfg(target_os = "android")]
+const ANDROID_UNSUPPORTED: &str = "安卓版不支持本地服务器，请在设置中添加云端服务器地址。";
 
 /// Local serve launch spec sent from the frontend settings UI.
 #[derive(Deserialize, Clone, Default)]
@@ -28,11 +39,13 @@ pub struct LocalServeSpec {
     /// "mimo" (default) or "opencode".
     pub kind: Option<String>,
     /// WSL distro name; when non-empty the serve is launched inside WSL.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub wsl: Option<String>,
 }
 
 pub struct ServeManager(Mutex<Option<RunningServe>>);
 
+#[cfg(not(target_os = "android"))]
 pub struct RunningServe {
     child: Child,
     url: String,
@@ -40,6 +53,10 @@ pub struct RunningServe {
     #[allow(dead_code)] // kept for future status/debug output
     password: String,
 }
+
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub struct RunningServe;
 
 #[derive(Serialize, Clone)]
 pub struct ServeHandle {
@@ -58,6 +75,12 @@ pub struct ServeStatus {
     pub kind: Option<String>,
 }
 
+#[cfg(not(target_os = "android"))]
+pub const DEFAULT_MIMO_USERNAME: &str = "mimocode";
+#[cfg(not(target_os = "android"))]
+const START_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[cfg(not(target_os = "android"))]
 struct ServeKind {
     binary: &'static str,
     env_var: &'static str,
@@ -65,6 +88,7 @@ struct ServeKind {
     label: &'static str,
 }
 
+#[cfg(not(target_os = "android"))]
 fn serve_kind(spec: &LocalServeSpec) -> ServeKind {
     match spec.kind.as_deref() {
         Some("opencode") => ServeKind {
@@ -98,6 +122,21 @@ impl ServeManager {
     /// `binary`: absolute path to a bundled mimo executable (only used for the
     /// mimo kind), or None to resolve the command from PATH / WSL.
     pub fn start(&self, spec: LocalServeSpec, binary: Option<String>) -> Result<ServeHandle, String> {
+        #[cfg(target_os = "android")]
+        {
+            // 安卓版不携带本地 serve：移动端无法运行桌面二进制，
+            // 统一通过「连接设置」对接远端 mimo serve。
+            let _ = (spec, binary);
+            return Err(ANDROID_UNSUPPORTED.into());
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            self.start_impl(spec, binary)
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn start_impl(&self, spec: LocalServeSpec, binary: Option<String>) -> Result<ServeHandle, String> {
         self.stop();
 
         let password = random_password();
@@ -167,18 +206,30 @@ impl ServeManager {
     }
 
     pub fn stop(&self) {
+        #[cfg(not(target_os = "android"))]
         if let Some(mut r) = self.0.lock().unwrap().take() {
             let _ = r.child.kill();
+        }
+        #[cfg(target_os = "android")]
+        {
+            let _ = self.0.lock().unwrap().take();
         }
     }
 
     pub fn status(&self) -> ServeStatus {
         let guard = self.0.lock().unwrap();
         match guard.as_ref() {
+            #[cfg(not(target_os = "android"))]
             Some(r) => ServeStatus {
                 running: true,
                 url: Some(r.url.clone()),
                 kind: Some(r.kind.clone()),
+            },
+            #[cfg(target_os = "android")]
+            Some(_) => ServeStatus {
+                running: true,
+                url: None,
+                kind: None,
             },
             None => ServeStatus {
                 running: false,
@@ -190,6 +241,7 @@ impl ServeManager {
 
     /// Prefer the bundled resource binary (mimo.exe), falling back to the
     /// system PATH `mimo` (which covers npm-global installs and `mimo serve`).
+    #[cfg(not(target_os = "android"))]
     pub fn resolve_binary(&self, app: &tauri::AppHandle) -> Option<String> {
         let bundled = app
             .path()
@@ -202,8 +254,15 @@ impl ServeManager {
         // Fall back to PATH resolution.
         None
     }
+
+    /// Android 版没有资源目录中的桌面二进制，直接返回 None。
+    #[cfg(target_os = "android")]
+    pub fn resolve_binary(&self, _app: &tauri::AppHandle) -> Option<String> {
+        None
+    }
 }
 
+#[cfg(not(target_os = "android"))]
 fn random_password() -> String {
     rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
@@ -225,6 +284,7 @@ fn random_password() -> String {
 ///
 /// Windows: CREATE_NO_WINDOW (0x08000000) is set on the child so no cmd /
 /// powershell console window pops up when launching serve.
+#[cfg(not(target_os = "android"))]
 fn serve_command(kind: &ServeKind, wsl: Option<&str>, bundled: Option<String>) -> Command {
     #[cfg(windows)]
     {
@@ -266,6 +326,7 @@ fn serve_command(kind: &ServeKind, wsl: Option<&str>, bundled: Option<String>) -
 /// Extract the http(s):// URL from the listening line, e.g.
 /// "mimocode server listening on http://127.0.0.1:PORT" or
 /// "opencode server listening on http://127.0.0.1:PORT".
+#[cfg(not(target_os = "android"))]
 fn extract_url(line: &str) -> Option<String> {
     let start = line.find("http://").or_else(|| line.find("https://"))?;
     let rest = line[start..].trim();
@@ -275,6 +336,7 @@ fn extract_url(line: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 fn parse_port(url: &str) -> Option<u16> {
     let rest = url.rsplit(':').next()?;
     rest.parse::<u16>().ok()

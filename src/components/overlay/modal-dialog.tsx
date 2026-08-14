@@ -26,7 +26,7 @@ export const ModalDialog: Component<ModalDialogProps> = (p) => {
         p.onClose()
         return
       }
-      if (event.key !== "Tab" || !dialogEl) return
+      if (event.key !== "Tab" || !dialogEl || event.defaultPrevented) return
       const focusable = Array.from(
         dialogEl.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"),
       )

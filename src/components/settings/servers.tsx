@@ -31,6 +31,7 @@ export const SettingsServers: Component<{ onChanged: () => void }> = (p) => {
   const {
     connection,
     bridge,
+    platform,
     profiles,
     activeProfile,
     setActiveProfile,
@@ -41,6 +42,7 @@ export const SettingsServers: Component<{ onChanged: () => void }> = (p) => {
     setLocalServe,
     disconnect,
   } = useApp()
+  const isAndroid = () => platform() === "android"
   const [draft, setDraft] = createSignal<(Omit<ServerProfile, "id"> & { id?: string }) | null>(null)
   const [busy, setBusy] = createSignal(false)
   const [localBusy, setLocalBusy] = createSignal(false)
@@ -193,9 +195,10 @@ export const SettingsServers: Component<{ onChanged: () => void }> = (p) => {
         </Row>
       </Section>
 
-      {/* 本地服务器设置 */}
-      <Section
-        title="本地服务器"
+      {/* 本地服务器设置（安卓版不支持本地 serve，隐藏整块） */}
+      <Show when={!isAndroid()}>
+        <Section
+          title="本地服务器"
         action={
           <Show when={bridge().isTauri()}>
             <span
@@ -260,12 +263,13 @@ export const SettingsServers: Component<{ onChanged: () => void }> = (p) => {
             </p>
           </Show>
         </div>
-      </Section>
+        </Section>
+      </Show>
 
       {/* 服务器列表（本地 + 云端） */}
       <Section title="服务器">
         <div class="py-2">
-          <For each={profiles()}>
+          <For each={profiles().filter((profile) => !isAndroid() || profile.mode !== "local")}>
             {(profile) => (
               <div
                 class={`flex items-center gap-2 rounded-lg border-b border-[var(--set-border-soft)] px-2 py-2 last:border-b-0 ${

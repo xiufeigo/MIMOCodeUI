@@ -326,6 +326,7 @@ const DirectoryPickerDialog: Component<DirectoryPickerDialogProps> = (p) => {
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   let requestID = 0
+  let useButtonEl: HTMLButtonElement | undefined
 
   createEffect(() => {
     if (!p.open) return
@@ -335,22 +336,24 @@ const DirectoryPickerDialog: Component<DirectoryPickerDialogProps> = (p) => {
     setError(null)
   })
 
+  /** 请求路径补全建议（Tab 补全与输入防抖共用）。 */
+  async function refreshSuggestions(value: string) {
+    const current = ++requestID
+    try {
+      const next = await completeLocalDirectories(value)
+      if (current === requestID) setSuggestions(next)
+    } catch {
+      if (current === requestID) setSuggestions([])
+    }
+  }
+
   createEffect(() => {
     const value = path().trim()
     if (!p.open || !value) {
       setSuggestions([])
       return
     }
-    const current = ++requestID
-    const timer = setTimeout(() => {
-      void completeLocalDirectories(value)
-        .then((next) => {
-          if (current === requestID) setSuggestions(next)
-        })
-        .catch(() => {
-          if (current === requestID) setSuggestions([])
-        })
-    }, 180)
+    const timer = setTimeout(() => void refreshSuggestions(value), 180)
     return () => clearTimeout(timer)
   })
 
@@ -378,14 +381,52 @@ const DirectoryPickerDialog: Component<DirectoryPickerDialogProps> = (p) => {
     }
   }
 
-  function selectCurrent() {
-    const current = listing()?.path || path().trim()
+  /** Tab 补全：循环切换补全建议；建议未加载时立即请求一次；无匹配时聚焦「使用当前文件夹」。 */
+  async function completeWithTab() {
+    const value = path().trim()
+    if (!value) return
+    let list = suggestions()
+    if (list.length === 0) {
+      try {
+        list = await completeLocalDirectories(value)
+      } catch {
+        list = []
+      }
+      if (list.length === 0) {
+        useButtonEl?.focus()
+        return
+      }
+      setSuggestions(list)
+    }
+    const current = value.toLowerCase()
+    const index = list.findIndex((entry) => entry.path.toLowerCase() === current)
+    const next = list[(index + 1) % list.length]
+    setPath(next.path)
+    // 立即刷新下一级补全建议，方便连续 Tab 深入
+    void refreshSuggestions(next.path)
+  }
+
+  /** 使用当前输入/选中的文件夹：未授权浏览过时先按输入路径授权校验。 */
+  async function selectCurrent() {
+    const current = path().trim()
     if (!current) {
       setError("请先选择文件夹")
       return
     }
-    p.onError(null)
-    p.onSelect(current)
+    setLoading(true)
+    setError(null)
+    try {
+      const next = await authorizeLocalDirectory(current)
+      setListing(next)
+      setPath(next.path)
+      setSuggestions([])
+      p.onError(null)
+      p.onSelect(next.path)
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -404,11 +445,19 @@ const DirectoryPickerDialog: Component<DirectoryPickerDialogProps> = (p) => {
           <div class="flex gap-2">
             <input
               class="min-w-0 flex-1 rounded-md border border-[var(--border-color)] bg-[var(--bg-input)] px-3 py-2 font-mono text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-              placeholder="通过“浏览…”选择文件夹，或输入已授权路径"
+              placeholder="通过“浏览…”选择文件夹，或输入已授权路径（Tab 补全）"
               value={path()}
+              autocomplete="off"
               onInput={(event) => setPath(event.currentTarget.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") void load(path())
+                if (event.key === "Enter") {
+                  void load(path())
+                  return
+                }
+                if (event.key === "Tab") {
+                  event.preventDefault()
+                  void completeWithTab()
+                }
               }}
               aria-label="文件夹路径"
             />
@@ -429,7 +478,7 @@ const DirectoryPickerDialog: Component<DirectoryPickerDialogProps> = (p) => {
             </div>
           </Show>
           <Show when={suggestions().length === 0 && path().trim() !== "" && !listing() && !error()}>
-            <p class="mt-1 text-xs text-[var(--text-muted)]">无匹配目录，回车或「浏览…」选择</p>
+            <p class="mt-1 text-xs text-[var(--text-muted)]">无匹配目录，Tab 补全或「浏览…」选择</p>
           </Show>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-2">
@@ -468,7 +517,12 @@ const DirectoryPickerDialog: Component<DirectoryPickerDialogProps> = (p) => {
         </div>
         <div class="flex items-center justify-between border-t border-[var(--border-color)] px-4 py-3">
           <span class="min-w-0 truncate font-mono text-xs text-[var(--text-muted)]">{listing()?.path || path()}</span>
-          <button class="ml-4 flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50" disabled={!listing()} onClick={selectCurrent}>
+          <button
+            ref={useButtonEl}
+            class="ml-4 flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            disabled={!path().trim() || loading()}
+            onClick={() => void selectCurrent()}
+          >
             <Check size={15} />
             使用当前文件夹
           </button>

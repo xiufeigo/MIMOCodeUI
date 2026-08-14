@@ -49,7 +49,7 @@ export interface WorkspacePageProps {
 
 /** Trae 风格三栏工作台：左侧任务 | 中间对话 | 右侧上下文面板。 */
 export function WorkspacePage(props: WorkspacePageProps) {
-  const { store, disconnect, connection, activeProfile, setActiveProfile } = useApp()
+  const { store, disconnect, connection, activeProfile, setActiveProfile, platform } = useApp()
   const { isModelVisible, settings, setLayoutWidth } = useSettings()
   const { displayTitle, rename, sortSessionIDs } = useSessionPreferences()
   const { isArchived } = useSessionArchive()
@@ -71,7 +71,9 @@ export function WorkspacePage(props: WorkspacePageProps) {
   const [taskSearchOpen, setTaskSearchOpen] = createSignal(false)
   const [renameSessionID, setRenameSessionID] = createSignal<string | null>(null)
   const [newTaskDirectory, setNewTaskDirectory] = createSignal<string | undefined>()
-  const [workspaceWidth, setWorkspaceWidth] = createSignal(0)
+  /** 新建任务页的草稿内容（任务列表中「新任务」占位行显示草稿/占位文案）。 */
+  const [newTaskDraft, setNewTaskDraft] = createSignal("")
+  const [workspaceWidth, setWorkspaceWidth] = createSignal(typeof window !== "undefined" ? window.innerWidth : 0)
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(clampLeftSidebarWidth(settings().layout.leftSidebarWidth))
   const [rightSidebarWidth, setRightSidebarWidth] = createSignal(clampRightSidebarWidth(settings().layout.rightSidebarWidth))
   const [temporaryLeftDrawer, setTemporaryLeftDrawer] = createSignal(false)
@@ -89,8 +91,14 @@ export function WorkspacePage(props: WorkspacePageProps) {
   const rightOpen = () => rightPanelMode() !== "closed"
   const rightExpanded = () => rightPanelMode() === "expanded" || rightPanelMode() === "expanded-floating"
   const chatFloating = () => rightPanelMode() === "expanded-floating"
+  // ---- 安卓自适应：手机（<640px）走紧凑抽屉布局；平板与桌面一致 ----
+  const isAndroid = () => platform() === "android"
+  const isPhone = () => isAndroid() && workspaceWidth() < 640
+  const isTablet = () => isAndroid() && !isPhone()
+  /** 平板按桌面最小窗口宽度（900px）计算布局模式，避免落入紧凑模式。 */
+  const layoutWidth = () => (isTablet() ? Math.max(workspaceWidth(), 900) : workspaceWidth())
   const layoutMode = createMemo<WorkspaceLayoutMode>(() =>
-    workspaceLayoutMode(workspaceWidth(), leftSidebarWidth(), rightSidebarWidth(), rightOpen() && !rightExpanded()),
+    workspaceLayoutMode(layoutWidth(), leftSidebarWidth(), rightSidebarWidth(), rightOpen() && !rightExpanded()),
   )
   const leftInline = () => layoutMode() === "wide"
   const effectiveLeftExpanded = () => temporaryLeftDrawer() || navExpanded()
@@ -191,6 +199,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
     setNavSel("tasks")
     setFileTreeRoot(null)
     setNewTaskDirectory(undefined)
+    setNewTaskDraft("")
     closeTemporaryDrawer()
   }
 
@@ -199,6 +208,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
     setNavSel("tasks")
     setFileTreeRoot(null)
     setNewTaskDirectory(directory)
+    setNewTaskDraft("")
     setArchiveMode(false)
     props.onOpenSession(null)
     closeTemporaryDrawer()
@@ -325,7 +335,11 @@ export function WorkspacePage(props: WorkspacePageProps) {
     try {
       const all = await c.listSessions()
       const matches = all.filter((session) => isUnderDirectory(session.directory, directory))
-      if (matches.length === 0) return
+      // 没有历史任务：直接进入新建任务界面，目录预填并出现在任务列表（「新任务」占位）。
+      if (matches.length === 0) {
+        openNewTask(directory)
+        return
+      }
       setWorkspaceLoad({ directory, sessions: matches })
       setWorkspaceLoadStage("prompt")
       setWorkspaceSelected(new Set<string>())
@@ -355,6 +369,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
     setWorkspaceDir(null)
     setWorkspaceLoad(null)
     setWorkspaceSelected(new Set<string>())
+    setNewTaskDraft("")
     setHydrated(false)
   })
 
@@ -585,8 +600,9 @@ export function WorkspacePage(props: WorkspacePageProps) {
   }
 
   return (
-    <div class="flex h-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--text-primary)]">
+    <div class="app-shell flex h-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--text-primary)]">
       <CustomTitlebar
+        mobile={isPhone()}
         showNavigation={settings().advanced.showNavigation}
         showSearch={settings().advanced.showSearch}
         navExpanded={leftVisible() && effectiveLeftExpanded()}
@@ -640,6 +656,8 @@ export function WorkspacePage(props: WorkspacePageProps) {
               onToggleArchiveMode={() => setArchiveMode((v) => !v)}
               workspaceDirectory={workspaceDir()}
               onOpenWorkspace={(dir) => void openWorkspace(dir)}
+              pendingNewTaskDirectory={props.activeSession ? null : newTaskDirectory()}
+              pendingNewTaskDraft={newTaskDraft()}
             />
           </aside>
           <Show when={leftInline() && navExpanded()}>
@@ -688,11 +706,13 @@ export function WorkspacePage(props: WorkspacePageProps) {
                     model={activeModel()}
                     reasoningEffort={activeReasoningEffort()}
                     effortOptions={activeEffortOptions()}
-                    initialDirectory={newTaskDirectory()}
+                    directory={newTaskDirectory()}
                     pending={pendingSession()}
                     onAgentChange={onAgentChange}
                     onModelChange={onModelChange}
                     onReasoningEffortChange={onReasoningEffortChange}
+                    onDirectoryChange={setNewTaskDirectory}
+                    onDraftChange={setNewTaskDraft}
                     onSubmit={createNewTask}
                   />
               }

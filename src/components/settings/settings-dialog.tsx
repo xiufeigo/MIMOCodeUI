@@ -74,8 +74,8 @@ export const SettingsDialog: Component<SettingsDialogProps> = (p) => {
 
   return (
     <ModalDialog open={p.open} title="设置" onClose={p.onClose} class="w-full max-w-[800px]">
-      <div class="settings-light flex h-[min(600px,calc(100dvh-2rem))] min-h-0 overflow-hidden rounded-2xl border border-neutral-200 bg-white text-[var(--set-text)] shadow-2xl">
-        <nav class="flex w-44 shrink-0 flex-col gap-1 border-r border-neutral-200 bg-[var(--set-nav-bg)] p-2">
+      <div class="settings-light flex h-[min(600px,calc(100dvh-2rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white text-[var(--set-text)] shadow-2xl sm:flex-row">
+        <nav class="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-neutral-200 bg-[var(--set-nav-bg)] p-2 sm:w-44 sm:flex-col sm:border-b-0 sm:border-r">
           <For each={TABS}>
             {(t) => (
               <button
@@ -91,7 +91,7 @@ export const SettingsDialog: Component<SettingsDialogProps> = (p) => {
               </button>
             )}
           </For>
-          <div class="mt-auto border-t border-neutral-200 pt-2">
+          <div class="ml-auto border-l border-neutral-200 pl-2 sm:ml-0 sm:mt-auto sm:border-l-0 sm:border-t sm:pl-0 sm:pt-2">
             <button
               class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-neutral-500 transition-colors hover:bg-neutral-200/70 hover:text-neutral-800"
               onClick={p.onClose}

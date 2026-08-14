@@ -1,9 +1,10 @@
 {
-  "name": "mimo-code-ui",
+  "name": "mimocode-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "MIMO Code UI — Tauri 2 desktop client for mimo serve (MiMo-Code)",
+  "license": "MIT",
+  "description": "MiMoCodeUI — Tauri 2 desktop client for mimo serve (MiMo-Code)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

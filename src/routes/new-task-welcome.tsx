@@ -16,12 +16,16 @@ interface NewTaskWelcomeProps {
   reasoningEffort?: ReasoningEffort
   /** 思考强度选项（由当前模型 variants 生成；缺省回退五档）。 */
   effortOptions?: ReasoningEffortOption[]
-  /** 外部（如左栏“在目录中新建”）预填的目录；组件首次挂载时应用一次。 */
-  initialDirectory?: string
+  /** 当前任务目录（受控，由工作区维护，任务列表「新任务」占位行同步使用）。 */
+  directory?: string
   pending: boolean
   onAgentChange: (agent: string | undefined) => void
   onModelChange: (model: string | undefined) => void
   onReasoningEffortChange: (effort: ReasoningEffort) => void
+  /** 目录变化（任务列表中的「新任务」占位分组跟随变化）。 */
+  onDirectoryChange?: (dir: string | undefined) => void
+  /** 草稿内容变化（用于任务列表中的「新任务」占位行）。 */
+  onDraftChange?: (text: string) => void
   onSubmit: (request: { text: string; directory?: string; profileID: string; agent?: string; model?: string; variant?: string; parts?: PromptPart[] }) => Promise<void>
 }
 
@@ -32,7 +36,6 @@ export type NewTaskPopover = "server" | "directory" | null
 export const NewTaskWelcome: Component<NewTaskWelcomeProps> = (p) => {
   const { profiles, activeProfile } = useApp()
   const [profileID, setProfileID] = createSignal(activeProfile().id)
-  const [directory, setDirectory] = createSignal<string | undefined>()
   const [draft, setDraft] = createSignal("")
   const [activePopover, setActivePopover] = createSignal<NewTaskPopover>(null)
   const [serverMenuRef, setServerMenuRef] = createSignal<HTMLElement | null>(null)
@@ -41,7 +44,7 @@ export const NewTaskWelcome: Component<NewTaskWelcomeProps> = (p) => {
 
   function selectProfile(id: string) {
     setProfileID(id)
-    setDirectory(undefined)
+    p.onDirectoryChange?.(undefined)
     setActivePopover(null)
   }
 
@@ -65,7 +68,10 @@ export const NewTaskWelcome: Component<NewTaskWelcomeProps> = (p) => {
             class="w-full max-w-3xl"
             draft={draft()}
             disabled={p.pending}
-            onDraftChange={setDraft}
+            onDraftChange={(value) => {
+              setDraft(value)
+              p.onDraftChange?.(value)
+            }}
             placeholder="帮你编写代码、调试 Bug、优化性能等开发工作…"
             agent={p.agent}
             model={p.model}
@@ -76,7 +82,7 @@ export const NewTaskWelcome: Component<NewTaskWelcomeProps> = (p) => {
             onAgentChange={p.onAgentChange}
             onModelChange={p.onModelChange}
             onReasoningEffortChange={p.onReasoningEffortChange}
-            onSubmitNewTask={(request) => p.onSubmit({ ...request, directory: directory(), profileID: profile().id })}
+            onSubmitNewTask={(request) => p.onSubmit({ ...request, directory: p.directory, profileID: profile().id })}
           />
 
           <div class="mt-4 flex w-full max-w-3xl min-w-0 flex-wrap items-center justify-start gap-1.5">
@@ -115,12 +121,11 @@ export const NewTaskWelcome: Component<NewTaskWelcomeProps> = (p) => {
             </div>
             <DirectoryPicker
               profile={profile()}
-              value={directory()}
-              initialDirectory={p.initialDirectory}
+              value={p.directory}
               open={activePopover() === "directory"}
               disabled={p.pending}
               onOpenChange={(open) => setActivePopover(open ? "directory" : null)}
-              onChange={setDirectory}
+              onChange={(dir) => p.onDirectoryChange?.(dir)}
             />
             <Show when={p.pending}>
               <span class="ml-auto text-xs text-[var(--text-muted)]">正在创建任务…</span>

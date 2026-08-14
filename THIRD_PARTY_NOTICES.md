@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-MIMOCode UI is a desktop client for the MiMo-Code / OpenCode `serve` protocol.
+MiMoCodeUI is a desktop client for the MiMo-Code / OpenCode `serve` protocol.
 Parts of this project are derived from, or inspired by, the following
 open-source projects. Both are distributed under the MIT License, which
 permits free use, modification and redistribution, including in commercial
@@ -47,7 +47,9 @@ SOFTWARE.
 ## MiMo-Code (XiaomiMiMo/MiMo-Code)
 
 - Repository: https://github.com/XiaomiMiMo/MiMo-Code
-- License: MIT License (Copyright Xiaomi MiMo Team)
+- License: MIT License
+- Copyright (c) 2026 MiMo Code, Xiaomi Corporation
+- Copyright (c) 2025 opencode
 
 This project implements a hand-written v1 HTTP/SSE protocol client
 (`src/lib/protocol/`) that speaks the `mimo serve` protocol, which itself is
@@ -57,7 +59,8 @@ shapes were verified empirically against `@mimo-ai/cli` 0.1.11.
 ```
 MIT License
 
-Copyright (c) Xiaomi MiMo Team
+Copyright (c) 2026 MiMo Code, Xiaomi Corporation
+Copyright (c) 2025 opencode
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -82,9 +85,11 @@ SOFTWARE.
 
 ## Bundled native binary
 
-The installer bundles the MiMo native binary `mimo.exe` (from the
-`@mimo-ai/cli` npm package, MIT License) into `src-tauri/resources/` so the
-application works without a pre-installed `mimo` CLI.
+The installer bundles the MiMo native binary `mimo.exe` from the
+`@mimo-ai/mimocode-windows-x64` npm package (MIT License,
+Copyright (c) 2026 MiMo Code, Xiaomi Corporation) into
+`src-tauri/resources/` so the application works without a pre-installed
+`mimo` CLI.
 
 ---
 

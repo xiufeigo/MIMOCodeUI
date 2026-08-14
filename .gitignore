@@ -17,6 +17,7 @@ src-tauri/resources/
 
 # 安装包产物（走 GitHub Releases）
 *.exe
+*.apk
 
 # Vite
 .vite/
