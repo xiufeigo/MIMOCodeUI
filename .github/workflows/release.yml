@@ -59,8 +59,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Install mimo CLI (bundles mimo.exe)
-        run: npm install -g @mimo-ai/cli
+      - name: Install mimo CLI and platform binary (bundles mimo.exe)
+        run: |
+          npm install -g @mimo-ai/cli
+          npm install -g @mimo-ai/mimocode-windows-x64
       - name: Install frontend dependencies
         run: npm ci
       - name: Build NSIS installer

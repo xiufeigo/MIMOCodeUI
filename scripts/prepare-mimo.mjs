@@ -14,6 +14,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 const destDir = join(root, "src-tauri", "resources")
 const dest = join(destDir, "mimo.exe")
 
+// CI 干净检出时 resources/ 目录不存在（不入库），先确保目录可用。
+mkdirSync(destDir, { recursive: true })
+
 function findBinary() {
   const platforms = {
     win32: { pkg: "@mimo-ai/mimocode-windows-x64", bin: "mimo.exe" },
@@ -37,7 +40,6 @@ if (!src) {
   writeFileSync(join(destDir, "VERSION"), "system\n")
   process.exit(0)
 }
-mkdirSync(destDir, { recursive: true })
 copyFileSync(src, dest)
 writeFileSync(join(destDir, "VERSION"), "bundled\n")
 console.log(`[prepare-mimo] bundled ${src} -> ${dest}`)
