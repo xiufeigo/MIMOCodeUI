@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag（如 v0.1.0，需与 package.json version 一致）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.t.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: t
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RAW="${GITHUB_REF_NAME}"
+          else
+            RAW="${{ inputs.tag }}"
+          fi
+          echo "tag=${RAW#v}" >> "$GITHUB_OUTPUT"
+      - name: Verify versions
+        run: |
+          VERSION="${{ steps.v.outputs.version }}"
+          TAG="${{ steps.t.outputs.tag }}"
+          TV=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "package.json=$VERSION tauri.conf.json=$TV tag=$TAG"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::tag（v$TAG）与 package.json version（$VERSION）不一致"
+            exit 1
+          fi
+          if [ "$TV" != "$VERSION" ]; then
+            echo "::error::tauri.conf.json version（$TV）与 package.json version（$VERSION）不一致"
+            exit 1
+          fi
+
+  build-desktop:
+    needs: version-check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install mimo CLI (bundles mimo.exe)
+        run: npm install -g @mimo-ai/cli
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build NSIS installer
+        run: npx tauri build
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          VERSION="${{ needs.version-check.outputs.version }}"
+          mkdir -p release
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe "release/MiMoCodeUI_${VERSION}_x64-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-installer
+          path: release/
+          if-no-files-found: error
+
+  build-android:
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Android SDK components
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Restore release keystore (optional)
+        if: secrets.ANDROID_KEYSTORE_BASE64 != ''
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+      - name: Build Android APK/AAB
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && 'keystore.jks' || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: npx tauri android build
+      - name: Collect artifacts
+        run: |
+          VERSION="${{ needs.version-check.outputs.version }}"
+          mkdir -p release
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk "release/MiMoCodeUI_${VERSION}_android.apk"
+          cp src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab "release/MiMoCodeUI_${VERSION}.aab"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-artifacts
+          path: release/
+          if-no-files-found: error
+
+  release:
+    needs: [build-desktop, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: artifacts/**/*
+          generate_release_notes: true

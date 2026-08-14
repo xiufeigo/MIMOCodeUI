@@ -24,6 +24,18 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    signingConfigs {
+        // 可选：通过环境变量注入正式 keystore（CI secrets）；未配置时回退 debug 签名。
+        val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+        if (!keystorePath.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "release"
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: storePassword
+            }
+        }
+    }
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -39,8 +51,8 @@ android {
         getByName("release") {
             // 远程 mimo serve 可能走明文 http，正式包也允许 cleartext。
             manifestPlaceholders["usesCleartextTraffic"] = "true"
-            // 侧载场景：release 也用调试密钥签名，保证 APK 可直接安装。
-            signingConfig = signingConfigs.getByName("debug")
+            // 有正式 keystore（环境变量）时用正式签名；否则用调试密钥签名保证可侧载安装。
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

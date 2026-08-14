@@ -68,7 +68,31 @@ npx tauri android build         # 产出 APK（默认全部 ABI；--target aarch
   （任务栏/右侧栏通过顶栏按钮滑出），顶栏不显示窗口控制按钮。
 - 支持 http/https 明文连接（`usesCleartextTraffic` 开启）；`mimo.exe`
   （仅 Windows 用）不会打进 APK（见 `src-tauri/tauri.android.conf.json`）。
-- release APK 使用调试密钥签名（侧载安装；上架商店前请换成正式签名）。
+- release APK 默认使用调试密钥签名（侧载安装）；配置正式 keystore 后使用正式签名。
+
+## 自动化发布（GitHub Actions）
+
+推送 `v*` tag（如 `v0.1.0`）自动触发 [.github/workflows/release.yml](.github/workflows/release.yml)：
+
+1. 更新版本号（`package.json` 与 `src-tauri/tauri.conf.json` 的 `version` 保持一致）；
+2. 提交并推送代码；
+3. 打 tag 并推送：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Actions 会在 Windows runner 构建 NSIS 安装包、在 Ubuntu runner 构建 Android
+APK/AAB（全部 ABI），随后发布到 GitHub Releases。也可以在 Actions 页面
+手动运行（`workflow_dispatch`，需填写与版本一致的 tag）。
+
+可选：配置正式 Android 签名（不配置则使用调试密钥签名）：
+
+- 生成 keystore：`keytool -genkey -v -keystore release.jks -alias release -keyalg RSA -keysize 2048 -validity 10000`
+- 在仓库 Settings → Secrets and variables → Actions 添加：
+  - `ANDROID_KEYSTORE_BASE64`：`release.jks` 的 base64（`base64 -w0 release.jks`）
+  - `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
 
 ## 连接方式
 
