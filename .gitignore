@@ -1,0 +1,22 @@
+# Node
+node_modules/
+dist/
+
+# Rust / Tauri
+src-tauri/target/
+# 捆绑的 mimo 二进制由 scripts/prepare-mimo.mjs 生成，不入库
+src-tauri/resources/
+
+# Runtime data（本地 serve 数据）
+.mimocode/
+.zcode/
+
+# Logs / misc
+*.log
+.DS_Store
+
+# 安装包产物（走 GitHub Releases）
+*.exe
+
+# Vite
+.vite/

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MimoCodeUI",
+  "version": "0.1.0",
+  "identifier": "com.mimocode.ui",
+  "build": {
+    "beforeDevCommand": "node scripts/prepare-mimo.mjs && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node scripts/prepare-mimo.mjs && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MimoCodeUI",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http: https: ws: wss:; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "resources/mimo.exe": "mimo.exe",
+      "resources/VERSION": "mimo-version.txt"
+    },
+    "icon": ["icons/icon.ico", "icons/icon.png"]
+  }
+}
