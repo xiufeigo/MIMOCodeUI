@@ -1,69 +1,77 @@
 import { createSignal, For, Show, type Component, type JSX } from "solid-js"
-import { FileDiff, Layers, Maximize2, Minimize2, MessagesSquare, PanelRightClose } from "lucide-solid"
-import { useApp } from "../../lib/store/provider"
+import {
+  FileDiff,
+  Files,
+  Globe,
+  Maximize2,
+  MessageSquare,
+  Minimize2,
+  PanelRightClose,
+  Plus,
+  SquareTerminal,
+} from "lucide-solid"
 import { Review } from "./review"
-import { ContextDetail } from "./context-detail"
+import { FilesSection, TerminalSection, ChatSection, BrowserSection } from "./sections"
+
+export type RightPanelSection = "review" | "files" | "chat" | "browser" | "terminal"
 
 export interface RightPanelProps {
-  /** Compact layouts display this panel as an overlay drawer. */
-  drawer?: boolean
-  width?: number
   open: boolean
   expanded: boolean
-  chatFloating: boolean
+  /** 当前布局是否允许展开；为 false 时展开按钮禁用。 */
+  canExpand: boolean
+  /** 未展开时的固定宽度（px）。 */
+  width: number
+  sessionID: string | null
   onClose: () => void
   onToggleExpanded: () => void
-  onToggleFloatingChat: () => void
-  sessionID: string
-  onPanelElement?: (element: HTMLElement | null) => void
+  onNewTask: () => void
+  /** 请求父级打开底部终端面板。 */
+  onRequestBottomTerminal: () => void
+  onPanelElement?: (el: HTMLElement | null) => void
 }
 
-type Tab = "review" | "context"
+interface SectionItem {
+  id: RightPanelSection
+  label: string
+  /** 入口行图标（工厂函数：Solid 模板里按行实例化）。 */
+  icon: () => JSX.Element
+  /** 行右侧的快捷键提示标签。 */
+  shortcut?: string
+}
+
+/** 五个入口的固定顺序。 */
+const SECTION_ITEMS: SectionItem[] = [
+  { id: "review", label: "审查", icon: () => <FileDiff size={16} /> },
+  { id: "files", label: "文件", icon: () => <Files size={16} />, shortcut: "Ctrl+P" },
+  { id: "chat", label: "侧边聊天", icon: () => <MessageSquare size={16} /> },
+  { id: "browser", label: "浏览器", icon: () => <Globe size={16} /> },
+  { id: "terminal", label: "终端", icon: () => <SquareTerminal size={16} /> },
+]
+
+const ICON_BUTTON_CLASS =
+  "flex h-8 w-8 items-center justify-center rounded text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
 
 /**
- * 右侧面板（OpenCode 官方样式）：默认含「审查」「上下文」两个不可关闭的
- * 标签页。审查 = 文件变更列表；上下文 = 待办 + 上下文进度 + 上下文详情。
+ * 右侧栏：顶栏一行 + 下面五段入口列表（审查 / 文件 / 侧边聊天 / 浏览器 / 终端）。
+ * 入口行只负责切换当前段；「终端」行额外通知父级打开底部终端面板。
  */
 export const RightPanel: Component<RightPanelProps> = (p) => {
-  const { store } = useApp()
-  const [tab, setTab] = createSignal<Tab>("context")
+  const [section, setSection] = createSignal<RightPanelSection>("review")
+  /** 上一个非「文件」入口，供文件树的「返回」使用。 */
+  const [previousSection, setPreviousSection] = createSignal<RightPanelSection>("review")
 
-  const messages = () => (p.sessionID ? store.sessionMessages(p.sessionID) : [])
-  const lastAssistant = () => {
-    for (const m of messages()) if (m.info?.role === "assistant") return m
-    return null
-  }
-  const tokenUsage = () => lastAssistant()?.info?.tokens
-  const inputTokens = () => tokenUsage()?.input ?? 0
-  const contextLimit = () => (p.sessionID ? store.contextLimit(p.sessionID) : 0)
-  const contextPct = () => {
-    const limit = contextLimit()
-    if (limit <= 0) return 0
-    return Math.min(100, Math.round((inputTokens() / limit) * 100))
+  function select(id: RightPanelSection) {
+    if (id !== "files") setPreviousSection(id)
+    setSection(id)
+    // 终端入口同时请求父级打开底部终端面板
+    if (id === "terminal") p.onRequestBottomTerminal()
   }
 
-  const isEditTool = (part: { type: string; tool?: string }) =>
-    part.type === "tool" && ["edit", "apply_patch", "write"].includes(part.tool ?? "")
-
-  const reviewCount = () => {
-    let n = 0
-    for (const m of messages()) for (const part of m.parts) if (isEditTool(part as never)) n++
-    return n
+  const expandTitle = () => {
+    if (!p.canExpand) return "当前布局不支持展开"
+    return p.expanded ? "收起面板" : "展开面板"
   }
-
-  const todos = () => {
-    const out: string[] = []
-    for (const m of messages())
-      for (const part of m.parts)
-        if (part.type === "tool" && part.tool === "todo_write") {
-          const o = (part as { state?: { output?: unknown } }).state?.output
-          if (typeof o === "string" && o.trim()) out.push(o.trim())
-        }
-    return out
-  }
-
-  const iconButtonClass =
-    "flex h-7 w-7 items-center justify-center rounded text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]"
 
   return (
     <Show when={p.open}>
@@ -71,110 +79,105 @@ export const RightPanel: Component<RightPanelProps> = (p) => {
         id="right-panel"
         ref={(element) => p.onPanelElement?.(element)}
         class={`flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--bg-surface)] transition-[width] duration-150 ${
-          p.drawer ? "absolute inset-y-2 right-2 z-30 shadow-2xl" : p.expanded ? "flex-1" : "shrink-0"
+          p.expanded ? "flex-1" : "shrink-0"
         }`}
-        style={p.expanded && !p.drawer ? undefined : { width: `${p.width ?? 384}px` }}
+        style={p.expanded ? undefined : { width: `${p.width}px` }}
       >
-        {/* Tab 栏：标签、悬浮对话、展开/还原与收起按钮。 */}
+        {/* 顶栏：左侧新建任务，右侧展开/收起与切换侧边栏。 */}
         <div class="flex h-11 shrink-0 items-center gap-1 border-b border-[var(--border-color)] px-2">
-          <PanelTab
-            icon={<FileDiff size={13} />}
-            label={`审查 ${reviewCount()}`}
-            active={tab() === "review"}
-            onClick={() => setTab("review")}
-          />
-          <PanelTab
-            icon={<Layers size={13} />}
-            label="上下文"
-            active={tab() === "context"}
-            onClick={() => setTab("context")}
-          />
+          <button
+            class={ICON_BUTTON_CLASS}
+            onClick={p.onNewTask}
+            title="新建任务"
+            aria-label="新建任务"
+          >
+            <Plus size={15} />
+          </button>
           <div class="ml-auto flex items-center gap-1">
-            <Show when={p.expanded}>
-              <button
-                class={`${iconButtonClass} ${p.chatFloating ? "bg-[var(--bg-hover)] text-[var(--text-primary)]" : ""}`}
-                onClick={p.onToggleFloatingChat}
-                title={p.chatFloating ? "关闭悬浮对话面板" : "悬浮对话面板"}
-                aria-label={p.chatFloating ? "关闭悬浮对话面板" : "悬浮对话面板"}
-              >
-                <MessagesSquare size={14} />
-              </button>
-            </Show>
             <button
-              class={iconButtonClass}
+              class={ICON_BUTTON_CLASS}
+              disabled={!p.canExpand}
               onClick={p.onToggleExpanded}
-              title={p.expanded ? "还原面板" : "展开面板"}
-              aria-label={p.expanded ? "还原面板" : "展开面板"}
+              title={expandTitle()}
+              aria-label={expandTitle()}
             >
               <Show when={p.expanded} fallback={<Maximize2 size={14} />}>
                 <Minimize2 size={14} />
               </Show>
             </button>
-            <button class={iconButtonClass} onClick={p.onClose} title="收起右侧栏" aria-label="收起右侧栏">
+            <button
+              class={ICON_BUTTON_CLASS}
+              onClick={p.onClose}
+              title="切换侧边栏"
+              aria-label="切换侧边栏"
+            >
               <PanelRightClose size={14} />
             </button>
           </div>
         </div>
 
-        {/* 内容 */}
-        <Show when={tab() === "review"}>
-          <Review sessionID={p.sessionID} />
-        </Show>
-
-        <Show when={tab() === "context"}>
-          <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
-            {/* 待办 */}
-            <div class="mb-3 rounded-lg border border-[var(--border-color)] p-3">
-              <div class="mb-2 flex items-center justify-between">
-                <span class="text-xs font-medium text-[var(--text-secondary)]">待办</span>
-              </div>
-              <Show
-                when={todos().length > 0}
-                fallback={<p class="text-xs text-[var(--text-muted)]">暂无待办，复杂任务的进展会显示在这里</p>}
+        {/* 入口列表 */}
+        <nav class="shrink-0 space-y-0.5 border-b border-[var(--border-color)] px-2 py-2" aria-label="右侧栏入口">
+          <For each={SECTION_ITEMS}>
+            {(item) => (
+              <button
+                class={`flex h-[52px] w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left transition-colors ${
+                  section() === item.id
+                    ? "bg-[var(--bg-raised)] text-[var(--text-primary)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                }`}
+                onClick={() => select(item.id)}
+                aria-current={section() === item.id ? "true" : undefined}
+                title={item.label}
               >
-                <For each={todos()}>
-                  {(t) => (
-                    <div class="flex items-start gap-2 py-0.5 text-xs text-[var(--text-secondary)]">
-                      <span class="mt-0.5 h-3 w-3 shrink-0 rounded border border-[var(--border-strong)]" />
-                      <span class="whitespace-pre-wrap">{t}</span>
-                    </div>
-                  )}
-                </For>
-              </Show>
-            </div>
+                <span class="flex w-4 shrink-0 items-center justify-center text-[var(--text-muted)]">{item.icon()}</span>
+                <span class="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                {/*
+                  快捷键标签仅作提示，尚未注册全局监听（由全局快捷键层统一处理），
+                  避免在输入框里打字时被右栏抢占按键。
+                */}
+                <Show when={item.shortcut}>
+                  <kbd class="rounded border border-[var(--border-color)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+                    {item.shortcut}
+                  </kbd>
+                </Show>
+              </button>
+            )}
+          </For>
+        </nav>
 
-            {/* 上下文进度 */}
-            <div class="mb-3 rounded-lg border border-[var(--border-color)] p-3">
-              <div class="mb-2 flex items-center justify-between">
-                <span class="text-xs font-medium text-[var(--text-secondary)]">上下文</span>
-                <span class="text-[10px] text-[var(--text-muted)]">{contextPct()}%</span>
-              </div>
-              <div class="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-raised)]">
-                <div
-                  class="h-full rounded-full"
-                  style={{ width: `${contextPct()}%`, background: contextPct() > 80 ? "var(--error)" : "var(--accent)" }}
-                />
-              </div>
-            </div>
-
-            {/* 上下文详情（OpenCode 官方样式，独立整页展示） */}
-            <ContextDetail sessionID={p.sessionID} />
-          </div>
-        </Show>
+        {/* 当前入口内容 */}
+        <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <Show when={section() === "review"}>
+            <Show
+              when={p.sessionID}
+              fallback={<SectionEmpty text="请先选择一个任务" hint="选中任务后即可查看它的文件变更。" />}
+            >
+              <Review sessionID={p.sessionID!} />
+            </Show>
+          </Show>
+          <Show when={section() === "files"}>
+            <FilesSection sessionID={p.sessionID} onBack={() => setSection(previousSection())} />
+          </Show>
+          <Show when={section() === "chat"}>
+            <ChatSection sessionID={p.sessionID} />
+          </Show>
+          <Show when={section() === "browser"}>
+            <BrowserSection />
+          </Show>
+          <Show when={section() === "terminal"}>
+            <TerminalSection sessionID={p.sessionID} />
+          </Show>
+        </div>
       </aside>
     </Show>
   )
 }
 
-const PanelTab: Component<{ icon?: JSX.Element; label: string; active: boolean; onClick: () => void }> = (p) => (
-  <button
-    class={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors ${
-      p.active ? "bg-[var(--bg-raised)] font-medium text-[var(--text-primary)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-    }`}
-    onClick={p.onClick}
-  >
-    {p.icon}
-    {p.label}
-  </button>
+/** 段内空态：没有选中会话时的统一提示。 */
+const SectionEmpty: Component<{ text: string; hint: string }> = (p) => (
+  <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+    <p class="text-xs text-[var(--text-secondary)]">{p.text}</p>
+    <p class="max-w-[16rem] text-[10px] leading-relaxed text-[var(--text-muted)]">{p.hint}</p>
+  </div>
 )
-

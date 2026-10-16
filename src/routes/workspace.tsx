@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
-import { MessageSquare, MoreHorizontal, PanelRightOpen, MessagesSquare } from "lucide-solid"
+import { MessageSquare, PanelLeftClose } from "lucide-solid"
 import { useApp, useClient } from "../lib/store/provider"
 import { createSessionAndPrompt } from "../lib/new-task"
 import { resolveSessionSelection } from "../lib/session-selection"
@@ -21,7 +21,15 @@ import { RightPanel } from "../components/right-panel/panel"
 import { SkillMarket } from "../components/skills/skill-market"
 import { SessionInfoTooltip } from "../components/session-info-tooltip"
 import { MoreMenuDropdown } from "../components/more-menu-dropdown"
-import { FloatingChatPanel } from "../components/floating-chat-panel"
+import { ShellHeader } from "../components/shell-header"
+import { InfoPanel } from "../components/info-panel"
+import { BottomPanel } from "../components/bottom-panel"
+import {
+  SidebarFlyout,
+  AccountMenu,
+  SIDEBAR_FLYOUT_SHOW_DELAY,
+  SIDEBAR_FLYOUT_HIDE_DELAY,
+} from "../components/shell"
 import { SidebarResizeHandle } from "../components/layout/sidebar-resize-handle"
 import { CustomTitlebar } from "../components/titlebar/custom-titlebar"
 import { TaskSearchDialog } from "../components/task-search-dialog"
@@ -39,8 +47,21 @@ import {
   workspaceLayoutMode,
   type WorkspaceLayoutMode,
 } from "../lib/layout"
-
-type RightPanelMode = "closed" | "split" | "expanded" | "expanded-floating"
+import {
+  canExpandRightPanel,
+  closeLeftShell,
+  closeRightShell,
+  deriveShellChrome,
+  loadShellLayout,
+  mainContentInset,
+  openLeftShell,
+  openRightShell,
+  saveShellLayout,
+  setRightExpanded,
+  toggleShell,
+  type ShellLayoutState,
+  type ShellToggle,
+} from "../lib/shell-layout"
 
 export interface WorkspacePageProps {
   activeSession: string | null
@@ -66,8 +87,11 @@ export function WorkspacePage(props: WorkspacePageProps) {
   const [fileTreeRoot, setFileTreeRoot] = createSignal<string | null>(null)
   const [infoTipOpen, setInfoTipOpen] = createSignal(false)
   const [moreOpen, setMoreOpen] = createSignal(false)
+  const [flyoutOpen, setFlyoutOpen] = createSignal(false)
+  const [accountMenuOpen, setAccountMenuOpen] = createSignal(false)
   const [moreReference, setMoreReference] = createSignal<HTMLElement | null>(null)
-  const [rightPanelMode, setRightPanelMode] = createSignal<RightPanelMode>("split")
+  /** 外壳布局 5 开关；持久化用户显式选择过的显隐状态。 */
+  const [shell, setShell] = createSignal<ShellLayoutState>(loadShellLayout())
   const [taskSearchOpen, setTaskSearchOpen] = createSignal(false)
   const [renameSessionID, setRenameSessionID] = createSignal<string | null>(null)
   const [newTaskDirectory, setNewTaskDirectory] = createSignal<string | undefined>()
@@ -83,33 +107,57 @@ export function WorkspacePage(props: WorkspacePageProps) {
   let leftDrawerEl: HTMLElement | undefined
   let navigationButtonEl: HTMLButtonElement | undefined
   let rightNavButtonEl: HTMLButtonElement | undefined
+  let moreTriggerEl: HTMLButtonElement | undefined
 
   const isTauriEnv = () =>
     typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined"
 
   const canWriteFiles = () => isTauriEnv() && activeProfile().mode === "local"
-  const rightOpen = () => rightPanelMode() !== "closed"
-  const rightExpanded = () => rightPanelMode() === "expanded" || rightPanelMode() === "expanded-floating"
-  const chatFloating = () => rightPanelMode() === "expanded-floating"
+  const rightOpen = () => shell().right
+  const rightExpanded = () => shell().expanded
   // ---- 安卓自适应：手机（<640px）走紧凑抽屉布局；平板与桌面一致 ----
   const isAndroid = () => platform() === "android"
   const isPhone = () => isAndroid() && workspaceWidth() < 640
   const isTablet = () => isAndroid() && !isPhone()
   /** 平板按桌面最小窗口宽度（900px）计算布局模式，避免落入紧凑模式。 */
   const layoutWidth = () => (isTablet() ? Math.max(workspaceWidth(), 900) : workspaceWidth())
+  /** 顶栏按钮分布与中栏可见性的唯一来源（见 lib/shell-layout.ts，有单测）。 */
+  const chrome = createMemo(() =>
+    deriveShellChrome(shell(), { showWindowControls: !isAndroid() }),
+  )
   const layoutMode = createMemo<WorkspaceLayoutMode>(() =>
     workspaceLayoutMode(layoutWidth(), leftSidebarWidth(), rightSidebarWidth(), rightOpen() && !rightExpanded()),
   )
   const leftInline = () => layoutMode() === "wide"
   const effectiveLeftExpanded = () => temporaryLeftDrawer() || navExpanded()
   const rightInline = () => rightOpen() && !rightExpanded() && layoutMode() !== "compact"
-  const leftVisible = () => leftInline() || temporaryLeftDrawer()
+  // 左侧栏显隐由 shell.left 开关决定（布局模式只决定「能否并排显示」）。
+  // 宽度足够时 shell.left 生效；宽度不足时退化为临时抽屉。
+  const leftVisible = () => (shell().left && leftInline()) || temporaryLeftDrawer()
   const rightVisible = () => rightInline() || rightExpanded() || temporaryRightDrawer()
+  /** 右栏是否允许进入「占据主屏」展开态（宽度不足时按钮应为禁用态）。 */
+  const rightCanExpand = () => canExpandRightPanel(shell(), layoutWidth())
+  /** 信息栏打开时中栏要向右让位，否则浮层会压住消息与输入框。 */
+  const contentInset = () => mainContentInset(shell(), layoutWidth())
+  /** 左侧栏当前实际占用的宽度（收起或抽屉态为 0）；展开态输入框据此左移。 */
+  const shellLeftInset = () => {
+    if (!leftVisible() || temporaryLeftDrawer()) return 0
+    return effectiveLeftExpanded() ? leftSidebarWidth() : 64
+  }
 
   createEffect(() => {
     setLeftSidebarWidth(clampLeftSidebarWidth(settings().layout.leftSidebarWidth))
     setRightSidebarWidth(clampRightSidebarWidth(settings().layout.rightSidebarWidth))
   })
+
+  /** 所有外壳开关的唯一写入口：归一化不变量后落盘。 */
+  function applyShell(next: ShellLayoutState) {
+    setShell(next)
+    saveShellLayout(next)
+  }
+  function toggleShellPart(key: ShellToggle) {
+    applyShell(toggleShell(shell(), key))
+  }
 
   function closeTemporaryDrawer(options?: { restoreFocus?: boolean }) {
     if (!temporaryLeftDrawer() && !temporaryRightDrawer()) return
@@ -126,7 +174,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
 
   /** 紧凑布局统一开关临时抽屉：打开一侧必然关闭另一侧及展开的右栏。 */
   function openTemporaryDrawer(side: "left" | "right" | null) {
-    if (side && rightExpanded()) setRightPanelMode("split")
+    if (side && rightExpanded()) applyShell(setRightExpanded(shell(), false, layoutWidth()))
     setTemporaryLeftDrawer(side === "left")
     setTemporaryRightDrawer(side === "right")
   }
@@ -219,7 +267,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
     setNavSel("plugins")
     setFileTreeRoot(null)
     setArchiveMode(false)
-    setRightPanelMode("closed")
+    applyShell(closeRightShell(shell()))
     closeTemporaryDrawer()
   }
 
@@ -230,7 +278,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
     setNavSel("tasks")
     setFileTreeRoot(store.store.sessions[sessionID]?.directory ?? "")
     setArchiveMode(false)
-    setRightPanelMode("split")
+    applyShell(openRightShell(shell()))
     setNewTaskDirectory(undefined)
     closeTemporaryDrawer()
   }
@@ -250,12 +298,45 @@ export function WorkspacePage(props: WorkspacePageProps) {
     else openNewTask()
   }
 
-  function toggleNavigation() {
+  /** 主区顶栏「打开左侧栏」：兼容宽度下退化为临时抽屉，宽屏下真正展开左栏。 */
+  function openLeftPanel() {
     if (layoutMode() !== "wide") {
-      openTemporaryDrawer(!temporaryLeftDrawer() ? "left" : null)
+      openTemporaryDrawer("left")
       return
     }
-    setNavExpanded((expanded) => !expanded)
+    applyShell(openLeftShell(shell()))
+  }
+
+  function closeLeftPanel() {
+    if (layoutMode() !== "wide") {
+      openTemporaryDrawer(null)
+      return
+    }
+    applyShell(closeLeftShell(shell()))
+  }
+
+  /**
+   * 左栏悬停预览的时序：悬停 90ms 后才弹，移开 200ms 后才收。
+   * 浮层会盖住触发按钮，这个缓冲是避免闪断的关键。
+   * 触控端没有 hover，直接跳过。
+   */
+  let flyoutTimer: ReturnType<typeof setTimeout> | undefined
+  function handleFlyoutHover(show: boolean) {
+    if (isPhone() || isAndroid()) return
+    clearTimeout(flyoutTimer)
+    flyoutTimer = setTimeout(
+      () => setFlyoutOpen(show),
+      show ? SIDEBAR_FLYOUT_SHOW_DELAY : SIDEBAR_FLYOUT_HIDE_DELAY,
+    )
+  }
+  onCleanup(() => clearTimeout(flyoutTimer))
+
+  function toggleInfoPanel() {
+    toggleShellPart("info")
+  }
+
+  function toggleBottomPanel() {
+    toggleShellPart("bottom")
   }
 
   function closeRightPanel() {
@@ -263,7 +344,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
       openTemporaryDrawer(null)
       return
     }
-    setRightPanelMode("closed")
+    applyShell(closeRightShell(shell()))
   }
 
   function openRightPanel() {
@@ -271,25 +352,22 @@ export function WorkspacePage(props: WorkspacePageProps) {
       openTemporaryDrawer("right")
       return
     }
-    setRightPanelMode("split")
+    applyShell(openRightShell(shell()))
   }
 
+  /** 右栏「展开面板」：宽度不足时保持并排（按钮此时为禁用态）。 */
   function toggleRightExpanded() {
-    setRightPanelMode((mode) => (mode === "expanded" || mode === "expanded-floating" ? "split" : "expanded"))
+    applyShell(setRightExpanded(shell(), !shell().expanded, layoutWidth()))
   }
 
-  function toggleFloatingChat() {
-    setRightPanelMode((mode) => (mode === "expanded-floating" ? "expanded" : "expanded-floating"))
-  }
-
-  /** 中栏按钮：紧凑布局打开右侧抽屉；普通分栏时先扩展右栏，再悬浮完整聊天窗。 */
-  function toggleRightAction() {
-    if (layoutMode() === "compact" && !rightExpanded()) {
-      openTemporaryDrawer(!temporaryRightDrawer() ? "right" : null)
+  /** 主区顶栏「切换侧边栏」：开↔关。 */
+  function toggleRightPanel() {
+    if (temporaryRightDrawer()) {
+      openTemporaryDrawer(null)
       return
     }
-    if (rightPanelMode() === "closed") openRightPanel()
-    else if (rightPanelMode() === "split") setRightPanelMode("expanded-floating")
+    if (rightOpen()) closeRightPanel()
+    else openRightPanel()
   }
 
   // Hydrate agents/providers once the connection becomes available.
@@ -420,7 +498,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
       )
       if (directory) rememberDirectory(selectedProfile.id, directory)
       openSession(created.id)
-      setRightPanelMode("split")
+      applyShell(openRightShell(shell()))
     } finally {
       setPendingSession(false)
     }
@@ -437,8 +515,11 @@ export function WorkspacePage(props: WorkspacePageProps) {
         closeRightPanel()
         break
       case "tab.files":
-      case "tab.terminal":
         openRightPanel()
+        break
+      case "tab.terminal":
+        // 终端归底部面板，不再占用右栏
+        applyShell(toggleShell(shell(), "bottom"))
         break
       case "prompt.focus":
         document.querySelector<HTMLTextAreaElement>("textarea")?.focus()
@@ -600,24 +681,27 @@ export function WorkspacePage(props: WorkspacePageProps) {
   }
 
   return (
-    <div class="app-shell flex h-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--text-primary)]">
-      <CustomTitlebar
-        mobile={isPhone()}
-        showNavigation={settings().advanced.showNavigation}
-        showSearch={settings().advanced.showSearch}
-        navExpanded={leftVisible() && effectiveLeftExpanded()}
-        navButtonRef={(element) => (navigationButtonEl = element)}
-        onToggleNav={toggleNavigation}
-        onSearchClick={() => {
-          closeTemporaryDrawer()
-          setTaskSearchOpen((open) => !open)
-        }}
-        searchActive={taskSearchOpen()}
-        onOpenSettings={() => {
-          closeTemporaryDrawer()
-          setSettingsOpen(true)
-        }}
-      />
+    <div class="app-shell relative flex h-full flex-col overflow-hidden bg-[var(--bg-app)] text-[var(--text-primary)]">
+      {/* 安卓端无窗口可拖、无窗口键；桌面端保留标题栏（窗口键 + 拖拽区）。 */}
+      <Show when={!isAndroid()}>
+        <CustomTitlebar
+          mobile={isPhone()}
+          showNavigation={settings().advanced.showNavigation}
+          showSearch={settings().advanced.showSearch}
+          navExpanded={leftVisible() && effectiveLeftExpanded()}
+          navButtonRef={(element) => (navigationButtonEl = element)}
+          onToggleNav={closeLeftPanel}
+          onSearchClick={() => {
+            closeTemporaryDrawer()
+            setTaskSearchOpen((open) => !open)
+          }}
+          searchActive={taskSearchOpen()}
+          onOpenSettings={() => {
+            closeTemporaryDrawer()
+            setAccountMenuOpen(true)
+          }}
+        />
+      </Show>
 
       <div ref={workspaceEl} class="relative flex min-h-0 flex-1 overflow-hidden">
         <Show when={leftVisible()}>
@@ -628,6 +712,20 @@ export function WorkspacePage(props: WorkspacePageProps) {
             }`}
             style={{ width: `${effectiveLeftExpanded() ? leftSidebarWidth() : 64}px` }}
           >
+            <Show when={isAndroid()}>
+              {/* 安卓端没有窗口标题栏，左侧栏的收起入口必须自带 */}
+              <div class="flex h-11 shrink-0 items-center gap-1 px-2">
+                <button
+                  type="button"
+                  class="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  onClick={closeLeftPanel}
+                  title="收起左侧栏"
+                  aria-label="收起左侧栏"
+                >
+                  <PanelLeftClose size={16} />
+                </button>
+              </div>
+            </Show>
             <LeftNav
               sessions={leftSessionIDs()}
               active={props.activeSession}
@@ -647,7 +745,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
               onOpenDirectoryFileTree={openDirectoryFileTree}
               onOpenSettings={() => {
                 closeTemporaryDrawer()
-                setSettingsOpen(true)
+                setAccountMenuOpen(true)
               }}
               fileTreeRoot={fileTreeRoot()}
               onCloseFileTree={() => setFileTreeRoot(null)}
@@ -660,7 +758,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
               pendingNewTaskDraft={newTaskDraft()}
             />
           </aside>
-          <Show when={leftInline() && navExpanded()}>
+          <Show when={shell().left && leftInline() && navExpanded()}>
             <SidebarResizeHandle
               side="left"
               value={leftSidebarWidth()}
@@ -679,7 +777,13 @@ export function WorkspacePage(props: WorkspacePageProps) {
           </Show>
         </Show>
 
-        <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* ================= 中栏 =================
+            展开态下收缩为 0 宽：右栏因此能占满主屏，输入框改为固定在底部横跨整个右栏。 */}
+        <div
+          class={`flex min-h-0 min-w-0 flex-col ${
+            shell().expanded ? "w-0 flex-none overflow-visible" : "flex-1"
+          }`}
+        >
           <Show
             when={connected()}
             fallback={
@@ -715,172 +819,200 @@ export function WorkspacePage(props: WorkspacePageProps) {
                     onDraftChange={setNewTaskDraft}
                     onSubmit={createNewTask}
                   />
-              }
+                }
               >
-                <div class="relative flex min-h-0 flex-1 gap-2 p-2">
-                  <Show when={!rightExpanded()}>
-                    <div class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--bg-surface)]">
-                      <div class="relative flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-color)] px-3">
-                        <button
-                          class="relative rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]"
-                          title="会话信息"
-                          onMouseEnter={() => setInfoTipOpen(true)}
-                          onMouseLeave={() => setInfoTipOpen(false)}
-                        >
-                          <MessageSquare size={16} />
-                          <SessionInfoTooltip sessionID={props.activeSession} visible={infoTipOpen()} />
-                        </button>
-                        <Show when={activeTitle()}>
-                          <span class="max-w-64 truncate text-sm font-medium text-[var(--text-primary)]">{activeTitle()}</span>
-                          <Show when={activeCreated()}>
-                            <span class="hidden text-xs text-[var(--text-muted)] md:inline">{formatTime(activeCreated()!)}</span>
-                          </Show>
-                        </Show>
-
-                        <div>
+                <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <ShellHeader
+                    chrome={chrome()}
+                    title={activeTitle()}
+                    showSearch={settings().advanced.showSearch}
+                    searchActive={taskSearchOpen()}
+                    compact={isPhone()}
+                    onOpenLeft={openLeftPanel}
+                    onNewTask={() => openNewTask()}
+                    onSearchClick={() => {
+                      closeTemporaryDrawer()
+                      setTaskSearchOpen((open) => !open)
+                    }}
+                    onToggleInfo={toggleInfoPanel}
+                    onToggleBottom={toggleBottomPanel}
+                    onToggleRight={toggleRightPanel}
+                    onHoverLeftIntent={handleFlyoutHover}
+                    onToggleMore={() => {
+                      const open = !moreOpen()
+                      setMoreOpen(open)
+                      setMoreReference(open ? (moreTriggerEl ?? null) : null)
+                    }}
+                    trailing={
+                      <Show when={activeTitle()}>
+                        <div class="flex min-w-0 items-center gap-2">
                           <button
-                            class="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]"
-                            title="更多操作"
-                            aria-expanded={moreOpen()}
-                            onClick={(event) => {
-                              const open = !moreOpen()
-                              setMoreOpen(open)
-                              setMoreReference(open ? event.currentTarget : null)
-                            }}
+                            type="button"
+                            class="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]"
+                            title="会话信息"
+                            onMouseEnter={() => setInfoTipOpen(true)}
+                            onMouseLeave={() => setInfoTipOpen(false)}
+                            onFocus={() => setInfoTipOpen(true)}
+                            onBlur={() => setInfoTipOpen(false)}
                           >
-                            <MoreHorizontal size={16} />
-                          </button>
-                          <Show when={moreOpen()}>
-                            <MoreMenuDropdown
-                              sessionID={props.activeSession!}
-                              reference={moreReference()}
-                              onOpenFileTree={(id) => openFileManager(id)}
-                              onDeleted={handleSessionDeleted}
-                              onRename={setRenameSessionID}
-                              onClose={() => {
-                                setMoreOpen(false)
-                                setMoreReference(null)
-                              }}
+                            <MessageSquare size={16} />
+                            <SessionInfoTooltip
+                              sessionID={props.activeSession}
+                              visible={infoTipOpen()}
                             />
-                          </Show>
-                        </div>
-
-                        <div class="ml-auto flex items-center gap-2">
-                          <Show when={activeStatus() && settings().advanced.showStatus}>
-                            <span
-                              class={`rounded px-2 py-0.5 text-xs ${
-                                activeStatus()?.type === "busy"
-                                  ? "bg-[var(--accent)]/20 text-[var(--accent)]"
-                                  : "bg-[var(--bg-raised)] text-[var(--text-muted)]"
-                              }`}
-                            >
-                              {activeStatus()?.type === "busy"
-                                ? "运行中"
-                                : activeStatus()?.type === "retry"
-                                  ? "需重试"
-                                  : "空闲"}
+                          </button>
+                          <Show when={activeCreated()}>
+                            <span class="hidden text-xs text-[var(--text-muted)] md:inline">
+                              {formatTime(activeCreated()!)}
                             </span>
                           </Show>
-                          <button
-                            class="rounded border border-[var(--border-color)] px-2 py-1 text-xs text-[var(--text-muted)] hover:border-[var(--error)] hover:text-[var(--error)]"
-                            onClick={disconnect}
-                            title="断开连接"
-                          >
-                            断开
-                          </button>
-                          <button
-                            ref={rightNavButtonEl}
-                            class="flex h-7 w-7 items-center justify-center rounded text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]"
-                            onClick={toggleRightAction}
-                            title={rightOpen() ? "悬浮对话面板" : "展开右侧栏"}
-                            aria-label={rightOpen() ? "悬浮对话面板" : "展开右侧栏"}
-                          >
-                            <Show when={rightOpen()} fallback={<PanelRightOpen size={15} />}>
-                              <MessagesSquare size={15} />
-                            </Show>
-                          </button>
                         </div>
-                      </div>
+                      </Show>
+                    }
+                  />
+                  <Show when={moreOpen() && moreReference()}>
+                    <MoreMenuDropdown
+                      sessionID={props.activeSession!}
+                      reference={moreReference()!}
+                      onOpenFileTree={(id) => {
+                        setMoreOpen(false)
+                        setMoreReference(null)
+                        openFileManager(id)
+                      }}
+                      onDeleted={(id) => {
+                        setMoreOpen(false)
+                        setMoreReference(null)
+                        handleSessionDeleted(id)
+                      }}
+                      onRename={(id) => {
+                        setMoreOpen(false)
+                        setMoreReference(null)
+                        setRenameSessionID(id)
+                      }}
+                      onClose={() => {
+                        setMoreOpen(false)
+                        setMoreReference(null)
+                      }}
+                    />
+                  </Show>
 
+                  {/* 右栏展开占据主屏时，消息区隐藏但输入框保留在底部 */}
+                  <div
+                    class={`flex min-h-0 flex-1 flex-col transition-[padding-right] duration-200 ${
+                      shell().expanded ? "overflow-visible" : "overflow-hidden"
+                    }`}
+                    style={{ "padding-right": `${contentInset()}px` }}
+                  >
+                    <Show when={chrome().messagesVisible} fallback={<div class="flex-1" />}>
                       <MessageList sessionID={props.activeSession!} messages={activeMessages()} />
                       <PermissionPrompt sessionID={props.activeSession!} />
                       <QuestionPrompt sessionID={props.activeSession!} />
-                      <PromptInput
-                        sessionID={props.activeSession!}
-                        agent={activeAgent()}
-                        model={activeModel()}
-                        reasoningEffort={activeReasoningEffort()}
-                    effortOptions={activeEffortOptions()}
-                        agents={selectableAgents()}
-                        models={modelOptions()}
-                        onAgentChange={onAgentChange}
-                        onModelChange={onModelChange}
-                        onReasoningEffortChange={onReasoningEffortChange}
-                        parentSessionID={activeParentID()}
-                        onReturnToParent={() => {
-                          const parent = activeParentID()
-                          if (parent) openSession(parent)
-                        }}
+                    </Show>
+
+                    <Show when={!shell().expanded}>
+                      <BottomPanel
+                        open={shell().bottom}
+                        sessionID={props.activeSession}
+                        onClose={() => applyShell(toggleShell(shell(), "bottom"))}
                       />
+                    </Show>
+
+                    <div
+                      class={
+                        shell().expanded
+                          ? "fixed bottom-0 right-0 z-40 border-t border-[var(--border-color)] bg-[var(--bg-app)] px-6 py-3"
+                          : ""
+                      }
+                      style={shell().expanded ? { left: `${shellLeftInset()}px` } : undefined}
+                    >
+                    <PromptInput
+                      sessionID={props.activeSession!}
+                      agent={activeAgent()}
+                      model={activeModel()}
+                      reasoningEffort={activeReasoningEffort()}
+                      effortOptions={activeEffortOptions()}
+                      agents={selectableAgents()}
+                      models={modelOptions()}
+                      onAgentChange={onAgentChange}
+                      onModelChange={onModelChange}
+                      onReasoningEffortChange={onReasoningEffortChange}
+                      parentSessionID={activeParentID()}
+                      onReturnToParent={() => {
+                        const parent = activeParentID()
+                        if (parent) openSession(parent)
+                      }}
+                    />
                     </div>
-                  </Show>
+                  </div>
 
-                  <Show when={rightInline() && !rightExpanded()}>
-                    <SidebarResizeHandle
-                      side="right"
-                      value={rightSidebarWidth()}
-                      min={RIGHT_SIDEBAR_MIN}
-                      max={RIGHT_SIDEBAR_MAX}
-                      onPreview={setRightSidebarWidth}
-                      onCommit={(value) => setLayoutWidth("right", value)}
-                    />
-                  </Show>
-                  <Show when={temporaryRightDrawer()}>
-                    <button
-                      class="absolute inset-0 z-20 bg-black/35"
-                      aria-label="关闭右侧栏"
-                      onClick={() => openTemporaryDrawer(null)}
-                    />
-                  </Show>
-                  <RightPanel
-                    open={rightVisible()}
-                    drawer={temporaryRightDrawer()}
-                    width={rightSidebarWidth()}
-                    expanded={rightExpanded()}
-                    chatFloating={chatFloating()}
-                    onClose={closeRightPanel}
-                    onToggleExpanded={toggleRightExpanded}
-                    onToggleFloatingChat={toggleFloatingChat}
-                    sessionID={props.activeSession!}
-                    onPanelElement={setRightPanelElement}
-                  />
-
-                  <FloatingChatPanel
-                    boundsElement={rightPanelElement()}
-                    open={chatFloating()}
-                    sessionID={props.activeSession!}
-                    onPinToPanel={() => setRightPanelMode("split")}
-                    agent={activeAgent()}
-                    model={activeModel()}
-                    reasoningEffort={activeReasoningEffort()}
-                    effortOptions={activeEffortOptions()}
-                    agents={selectableAgents()}
-                    models={modelOptions()}
-                    onAgentChange={onAgentChange}
-                    onModelChange={onModelChange}
-                    onReasoningEffortChange={onReasoningEffortChange}
-                    parentSessionID={activeParentID()}
-                    onReturnToParent={() => {
-                      const parent = activeParentID()
-                      if (parent) openSession(parent)
-                    }}
+                  {/* 信息栏：悬浮在主区右上角；展开态下自动隐藏 */}
+                  <InfoPanel
+                    sessionID={props.activeSession}
+                    open={shell().info && !shell().expanded}
+                    onClose={toggleInfoPanel}
                   />
                 </div>
               </Show>
             </Show>
           </Show>
         </div>
+
+        {/* ================= 右侧栏 ================= */}
+        <Show when={rightInline() && !rightExpanded()}>
+          <SidebarResizeHandle
+            side="right"
+            value={rightSidebarWidth()}
+            min={RIGHT_SIDEBAR_MIN}
+            max={RIGHT_SIDEBAR_MAX}
+            onPreview={setRightSidebarWidth}
+            onCommit={(value) => setLayoutWidth("right", value)}
+          />
+        </Show>
+        <Show when={temporaryRightDrawer()}>
+          <button
+            class="absolute inset-0 z-20 bg-black/35"
+            aria-label="关闭右侧栏"
+            onClick={() => openTemporaryDrawer(null)}
+          />
+        </Show>
+        <Show when={Boolean(props.activeSession) && navSel() === "tasks"}>
+          <RightPanel
+            open={rightVisible()}
+            expanded={rightExpanded()}
+            canExpand={rightCanExpand()}
+            width={rightSidebarWidth()}
+            sessionID={props.activeSession}
+            onClose={closeRightPanel}
+            onToggleExpanded={toggleRightExpanded}
+            onNewTask={() => openNewTask()}
+            onRequestBottomTerminal={() => {
+              if (!shell().bottom) applyShell(toggleShell(shell(), "bottom"))
+            }}
+            onPanelElement={setRightPanelElement}
+          />
+        </Show>
       </div>
+
+      {/* 左侧栏悬停预览（触控端不启用 hover，由顶部按钮直接展开） */}
+      <SidebarFlyout
+        open={flyoutOpen()}
+        onOpen={() => {
+          setFlyoutOpen(false)
+          openLeftPanel()
+        }}
+        width={leftSidebarWidth()}
+        touch={isPhone()}
+      />
+
+      <AccountMenu
+        open={accountMenuOpen()}
+        onClose={() => setAccountMenuOpen(false)}
+        onOpenSettings={() => {
+          setAccountMenuOpen(false)
+          setSettingsOpen(true)
+        }}
+        onSignOut={disconnect}
+      />
 
       <TaskSearchDialog
         open={taskSearchOpen()}
